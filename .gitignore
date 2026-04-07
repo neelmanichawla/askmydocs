@@ -39,8 +39,8 @@ venv.bak/
 .DS_Store
 Thumbs.db
 
-# Streamlit
-.streamlit/
+# Streamlit config (keep this)
+.streamlit/config.toml
 
 # Logs
 *.log
