@@ -1,0 +1,6 @@
+streamlit==1.35.0
+scikit-learn==1.4.2
+pymupdf==1.24.4
+ollama==0.1.8
+sentence-transformers==2.6.1
+numpy==1.26.4
