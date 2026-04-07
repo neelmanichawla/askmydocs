@@ -1,6 +1,6 @@
 streamlit
 scikit-learn
 pymupdf
-ollama
 sentence-transformers
 numpy
+requests

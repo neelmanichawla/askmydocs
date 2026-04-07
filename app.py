@@ -3,8 +3,9 @@ import fitz  # PyMuPDF
 import re
 from sentence_transformers import SentenceTransformer, util
 import numpy as np
-import ollama
 from sklearn.feature_extraction.text import TfidfVectorizer
+import requests
+import json
 
 # -----------------------------
 # TEXT EXTRACTION
@@ -161,42 +162,84 @@ QUESTION:
 
 ANSWER:"""
 
-    # Try multiple models with fallback
-    models_to_try = ["deepseek-v3.1:671b-cloud", "minimax-m2:cloud", "glm-4.6:cloud"]
+    # Try multiple free API services with fallback
+    apis_to_try = ["huggingface", "openrouter"]
 
-    # Check which models are actually available
-    try:
-        available_models = [m.model for m in ollama.list().models]
-        models_to_try = [model for model in models_to_try if model in available_models]
-        if not models_to_try:
-            return "ERROR: No available models found"
-    except Exception as e:
-        st.warning(f"Could not check available models: {e}")
-
-    for model in models_to_try:
+    for api in apis_to_try:
         try:
-            response = ollama.chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.1}  # Low temperature for factual answers
-            )
-
-            answer = response['message']['content'].strip()
+            if api == "huggingface":
+                # Hugging Face Inference API - FREE
+                answer = call_huggingface_api(prompt)
+            elif api == "openrouter":
+                # OpenRouter API with free models
+                answer = call_openrouter_api(prompt)
 
             # Validate answer doesn't hallucinate
-            if answer.strip().lower() in ["not found in document", "i don't know"]:
-                return "NOT FOUND IN DOCUMENT"
-            # Allow answers that contain "not found" but aren't just that phrase
-            if answer.strip().lower().startswith("not found in document") and len(answer.strip()) < 25:
-                return "NOT FOUND IN DOCUMENT"
-
-            return answer
+            if answer and answer.strip().lower() not in ["not found in document", "i don't know", ""]:
+                if "not found" in answer.lower() and len(answer.strip()) < 30:
+                    return "NOT FOUND IN DOCUMENT"
+                return answer
 
         except Exception as e:
-            st.warning(f"Model {model} unavailable, trying next...")
+            st.warning(f"{api} API unavailable, trying next...")
             continue
 
     return "NOT FOUND IN DOCUMENT"
+
+def call_huggingface_api(prompt):
+    """Call Hugging Face Inference API with free models"""
+    try:
+        # Using a simple model that doesn't require API key
+        API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-large"
+
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_length": 500,
+                "temperature": 0.1,
+                "do_sample": False
+            }
+        }
+
+        response = requests.post(API_URL, json=payload)
+        response.raise_for_status()
+
+        result = response.json()
+        if isinstance(result, list) and len(result) > 0:
+            return result[0].get('generated_text', '').strip()
+        return ""
+
+    except Exception as e:
+        raise Exception(f"Hugging Face API error: {e}")
+
+def call_openrouter_api(prompt):
+    """Call OpenRouter API with free models"""
+    try:
+        # Using a free model available on OpenRouter
+        API_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+        payload = {
+            "model": "google/gemma-2b-it:free",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 500
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": ""  # No key needed for free tier
+        }
+
+        response = requests.post(API_URL, json=payload, headers=headers)
+        response.raise_for_status()
+
+        result = response.json()
+        return result['choices'][0]['message']['content'].strip()
+
+    except Exception as e:
+        raise Exception(f"OpenRouter API error: {e}")
 
 # -----------------------------
 # STREAMLIT UI
