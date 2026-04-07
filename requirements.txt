@@ -4,3 +4,4 @@ pymupdf
 sentence-transformers
 numpy
 requests
+ollama

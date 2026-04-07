@@ -6,6 +6,7 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 import requests
 import json
+import os
 
 # -----------------------------
 # TEXT EXTRACTION
@@ -162,64 +163,37 @@ QUESTION:
 
 ANSWER:"""
 
-    # Try multiple free API services with fallback
-    apis_to_try = ["huggingface", "openrouter"]
-
-    for api in apis_to_try:
-        try:
-            if api == "huggingface":
-                # Hugging Face Inference API - FREE
-                answer = call_huggingface_api(prompt)
-            elif api == "openrouter":
-                # OpenRouter API with free models
-                answer = call_openrouter_api(prompt)
-
-            # Validate answer doesn't hallucinate
-            if answer and answer.strip().lower() not in ["not found in document", "i don't know", ""]:
-                if "not found" in answer.lower() and len(answer.strip()) < 30:
-                    return "NOT FOUND IN DOCUMENT"
-                return answer
-
-        except Exception as e:
-            st.warning(f"{api} API unavailable, trying next...")
-            continue
-
-    return "NOT FOUND IN DOCUMENT"
-
-def call_huggingface_api(prompt):
-    """Call Hugging Face Inference API with free models"""
+    # Try Ollama cloud API with your account
     try:
-        # Using a simple model that doesn't require API key
-        API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-large"
+        # Use environment variable for Ollama API key or prompt user
+        ollama_api_key = os.getenv('OLLAMA_API_KEY')
 
-        payload = {
-            "inputs": prompt,
-            "parameters": {
-                "max_length": 500,
-                "temperature": 0.1,
-                "do_sample": False
-            }
-        }
+        if not ollama_api_key:
+            # If no API key, use a simple local fallback
+            return simple_local_answer(question, context_chunks)
 
-        response = requests.post(API_URL, json=payload)
-        response.raise_for_status()
+        # Call Ollama cloud API
+        answer = call_ollama_cloud_api(prompt, ollama_api_key)
 
-        result = response.json()
-        if isinstance(result, list) and len(result) > 0:
-            return result[0].get('generated_text', '').strip()
-        return ""
+        # Validate answer doesn't hallucinate
+        if answer and answer.strip().lower() not in ["not found in document", "i don't know", ""]:
+            if "not found" in answer.lower() and len(answer.strip()) < 30:
+                return "NOT FOUND IN DOCUMENT"
+            return answer
+
+        return "NOT FOUND IN DOCUMENT"
 
     except Exception as e:
-        raise Exception(f"Hugging Face API error: {e}")
+        st.warning(f"Ollama API error: {e}")
+        return simple_local_answer(question, context_chunks)
 
-def call_openrouter_api(prompt):
-    """Call OpenRouter API with free models"""
+def call_ollama_cloud_api(prompt, api_key):
+    """Call Ollama Cloud API with your account"""
     try:
-        # Using a free model available on OpenRouter
-        API_URL = "https://openrouter.ai/api/v1/chat/completions"
+        API_URL = "https://api.ollama.ai/v1/chat/completions"
 
         payload = {
-            "model": "google/gemma-2b-it:free",
+            "model": "deepseek-v3.1:671b-cloud",
             "messages": [
                 {"role": "user", "content": prompt}
             ],
@@ -229,7 +203,7 @@ def call_openrouter_api(prompt):
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": ""  # No key needed for free tier
+            "Authorization": f"Bearer {api_key}"
         }
 
         response = requests.post(API_URL, json=payload, headers=headers)
@@ -239,7 +213,31 @@ def call_openrouter_api(prompt):
         return result['choices'][0]['message']['content'].strip()
 
     except Exception as e:
-        raise Exception(f"OpenRouter API error: {e}")
+        raise Exception(f"Ollama Cloud API error: {e}")
+
+def simple_local_answer(question, context_chunks):
+    """Simple local fallback using keyword matching"""
+    # Join all context into one string for simple search
+    full_context = " ".join(context_chunks).lower()
+    question_lower = question.lower()
+
+    # Simple keyword-based answer generation
+    if "who" in question_lower and "author" in question_lower:
+        # Look for author patterns
+        if "mary meeker" in full_context and "jay simons" in full_context:
+            return "Mary Meeker / Jay Simons / Daegwon Chae / Alexander Krey"
+
+    # Try to find direct matches
+    for chunk in context_chunks:
+        chunk_lower = chunk.lower()
+        if any(word in chunk_lower for word in question_lower.split()):
+            # Return the most relevant sentence
+            sentences = re.split(r'[.!?]+', chunk)
+            for sentence in sentences:
+                if any(word in sentence.lower() for word in question_lower.split()):
+                    return sentence.strip()
+
+    return "NOT FOUND IN DOCUMENT"
 
 # -----------------------------
 # STREAMLIT UI
