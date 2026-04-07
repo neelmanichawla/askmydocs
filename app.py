@@ -165,15 +165,15 @@ ANSWER:"""
 
     # Try Ollama cloud API with your account
     try:
-        # Use environment variable for Ollama API key or prompt user
-        ollama_api_key = os.getenv('OLLAMA_API_KEY')
+        # Use environment variable for OpenAI API key or prompt user
+        openai_api_key = os.getenv('OPENAI_API_KEY')
 
-        if not ollama_api_key:
+        if not openai_api_key:
             # If no API key, use a simple local fallback
             return simple_local_answer(question, context_chunks)
 
-        # Call Ollama cloud API
-        answer = call_ollama_cloud_api(prompt, ollama_api_key)
+        # Call OpenAI API
+        answer = call_openai_api(prompt, openai_api_key)
 
         # Validate answer doesn't hallucinate
         if answer and answer.strip().lower() not in ["not found in document", "i don't know", ""]:
@@ -184,16 +184,16 @@ ANSWER:"""
         return "NOT FOUND IN DOCUMENT"
 
     except Exception as e:
-        st.warning(f"Ollama API error: {e}")
+        st.warning(f"OpenAI API error: {e}")
         return simple_local_answer(question, context_chunks)
 
-def call_ollama_cloud_api(prompt, api_key):
-    """Call Ollama Cloud API with your account"""
+def call_openai_api(prompt, api_key):
+    """Call OpenAI API with free tier"""
     try:
-        API_URL = "https://api.ollama.ai/v1/chat/completions"
+        API_URL = "https://api.openai.com/v1/chat/completions"
 
         payload = {
-            "model": "deepseek-v3.1:671b-cloud",
+            "model": "gpt-3.5-turbo",  # Free tier model
             "messages": [
                 {"role": "user", "content": prompt}
             ],
@@ -213,7 +213,7 @@ def call_ollama_cloud_api(prompt, api_key):
         return result['choices'][0]['message']['content'].strip()
 
     except Exception as e:
-        raise Exception(f"Ollama Cloud API error: {e}")
+        raise Exception(f"OpenAI API error: {e}")
 
 def simple_local_answer(question, context_chunks):
     """Simple local fallback using keyword matching"""
