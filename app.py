@@ -221,13 +221,41 @@ def simple_local_answer(question, context_chunks):
     full_context = " ".join(context_chunks).lower()
     question_lower = question.lower()
 
-    # Simple keyword-based answer generation
+    # Dynamic author detection using common patterns
     if "who" in question_lower and "author" in question_lower:
-        # Look for author patterns
-        if "mary meeker" in full_context and "jay simons" in full_context:
-            return "Mary Meeker / Jay Simons / Daegwon Chae / Alexander Krey"
+        # Look for common author patterns in the text
+        author_patterns = [
+            r'by\s+([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',  # by First Last
+            r'author[s]?[:\-\s]+([A-Z][a-z]+\s+[A-Z][a-z]+)',  # Author: Name
+            r'written by\s+([A-Z][a-z]+\s+[A-Z][a-z]+)',  # written by Name
+            r'created by\s+([A-Z][a-z]+\s+[A-Z][a-z]+)',  # created by Name
+        ]
 
-    # Try to find direct matches
+        for pattern in author_patterns:
+            matches = re.findall(pattern, " ".join(context_chunks), re.IGNORECASE)
+            if matches:
+                return f"Authors: {', '.join(matches)}"
+
+    # Try to find direct matches using TF-IDF similarity
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        vectorizer = TfidfVectorizer(stop_words='english')
+        chunk_vectors = vectorizer.fit_transform(context_chunks)
+
+        question_vector = vectorizer.transform([question])
+        similarities = (question_vector * chunk_vectors.T).toarray()[0]
+
+        if similarities.max() > 0.1:  # Reasonable similarity threshold
+            best_chunk = context_chunks[similarities.argmax()]
+            # Return first relevant sentence
+            sentences = re.split(r'[.!?]+', best_chunk)
+            for sentence in sentences:
+                if any(word in sentence.lower() for word in question_lower.split()):
+                    return sentence.strip()
+    except:
+        pass  # Fall through to basic keyword matching
+
+    # Basic keyword matching fallback
     for chunk in context_chunks:
         chunk_lower = chunk.lower()
         if any(word in chunk_lower for word in question_lower.split()):
