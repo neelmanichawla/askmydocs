@@ -21,7 +21,7 @@ def load_models():
 retrieval_model, reranker = load_models()
 
 # Financial terms to filter out
-FINANCIAL_TERMS = {'EQUITY', 'LLC', 'LTD', 'INC', 'CORP'}
+FINANCIAL_TERMS = {'BOND', 'EQUITY', 'COMPANY', 'LLC', 'LTD', 'INC', 'CORP'}
 
 # -----------------------------
 # QUERY EXPANSION
@@ -50,7 +50,8 @@ def dynamic_threshold(similarities, base=0.1):
         return base
     mean = np.mean(similarities)
     std = np.std(similarities)
-    return max(base, mean + 0.5 * std)
+    # Use mean - 0.5*std so good matches (above average) always pass
+    return max(base, mean - 0.5 * std)
 
 # -----------------------------
 # SCORE FILTERING
@@ -74,11 +75,7 @@ def extract_text(uploaded_file):
             text = ""
             for page in doc:
                 text += page.get_text()
-            # Store first-page metadata separately in session state
-            full = text.strip()
-            if 'doc_metadata' not in st.session_state:
-                st.session_state['doc_metadata'] = full[:800]
-            return full
+            return text.strip()
         except Exception as e:
             st.error(f"Error reading PDF: {e}")
             return ""
@@ -175,16 +172,6 @@ def rerank_chunks(query, chunks, top_k=5):
 # -----------------------------
 def _extract_author(context):
     """Extract author information from context"""
-    # Look for multiple consecutive proper names (e.g., title pages with author lists)
-    # Pattern: 2-4 words that look like proper names appearing close together
-    name_block = re.findall(r'\b([A-Z][a-z]+ [A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b', context)
-    if name_block and len(name_block) >= 2:
-        # Filter out common non-name phrases
-        stopwords = {'The Document', 'This Report', 'All Rights', 'New York', 'United States', 'Artificial Intelligence'}
-        names = [n for n in name_block[:8] if n not in stopwords and len(n.split()) >= 2]
-        if len(names) >= 2:
-            return ', '.join(names[:4])
-
     # Look for author declaration patterns
     author_patterns = [
         r'(?:author|written by|created by|prepared by)\s*:?\s*([^.]{5,100}?)(?=\n|[.;]|$)',
@@ -231,22 +218,9 @@ def generate_answer(question, context_chunks):
     if not context_chunks:
         return "NOT FOUND IN DOCUMENT"
 
-    # Always prepend first-page metadata for author/date/title queries
-    metadata = st.session_state.get('doc_metadata', '')
-    question_lower = question.lower()
-
-    if any(word in question_lower for word in ['author', 'who wrote', 'created by', 'authored', 'publisher', 'published by']):
-        # Search metadata first (title page always has author info)
-        meta_context = metadata + " " + " ".join(context_chunks)
-        author = _extract_author(meta_context)
-        if author:
-            return author
-        # Fallback: return first 400 chars of metadata which contains author block
-        if metadata:
-            return f"Based on the document's title page: {metadata[:400].strip()}"
-
     # Join context for extraction
     full_context = " ".join(context_chunks)
+    question_lower = question.lower()
 
     # Special handling for specific question types
     if any(word in question_lower for word in ['author', 'who wrote', 'created by', 'authored']):
@@ -401,6 +375,16 @@ def main():
             expanded_question = expand_query(question)
 
             with st.spinner("Searching for relevant information..."):
+                # For metadata questions, bypass retrieval and use stored first-page text
+                metadata_keywords = ['author', 'who wrote', 'created by', 'authored', 'publisher', 'published by', 'who made', 'who created']
+                is_metadata_question = any(kw in question.lower() for kw in metadata_keywords)
+
+                if is_metadata_question and st.session_state.get('doc_metadata'):
+                    metadata = st.session_state['doc_metadata']
+                    st.success("### Answer:")
+                    st.write(f"Based on the document title page:\n\n{metadata[:500].strip()}")
+                    st.stop()
+
                 relevant_chunks, similarity_score, all_scores = get_relevant_chunks_semantic(
                     expanded_question,
                     st.session_state.chunks,
