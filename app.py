@@ -6,7 +6,7 @@ import numpy as np
 from groq import Groq
 from sentence_transformers import SentenceTransformer, util
 
-st.set_page_config(page_title="AskMyDocs", page_icon="📄", layout="centered",
+st.set_page_config(page_title="AskMyDocs", page_icon="\U0001f4c4", layout="centered",
                    initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -119,6 +119,7 @@ def retrieve(query, chunks, chunk_embs, top_k=5):
     scores = util.cos_sim(q_emb, chunk_embs)[0].cpu().numpy()
     idx = np.argsort(scores)[::-1][:top_k]
     result_idx = list(idx)
+    # pin first chunk — metadata/title/author always lives there
     if 0 not in result_idx and len(chunks) > 0:
         result_idx = [0] + result_idx[:top_k - 1]
     return [chunks[i] for i in result_idx], float(scores[idx[0]])
@@ -177,7 +178,7 @@ with st.sidebar:
     temperature = st.slider("Temperature", 0.0, 1.0, 0.1, 0.05,
                             help="Low = factual, High = creative")
     top_k = st.slider("Chunks retrieved", 2, 8, 4,
-                      help="More = richer context, more tokens used")
+                      help="More chunks = richer context")
     st.divider()
     if st.session_state.processed:
         st.markdown("**" + st.session_state.filename + "**")
@@ -196,12 +197,10 @@ if uploaded:
     if uploaded.size > 15 * 1024 * 1024:
         st.error("File too large (max 15 MB).")
         st.stop()
-
     if uploaded.name != st.session_state.filename:
         st.session_state.update(chunks=[], embs=None,
                                 filename=uploaded.name,
                                 processed=False, history=[])
-
     if not st.session_state.processed:
         if st.button("Process Document", use_container_width=True):
             bar = st.progress(0, "Reading document...")
@@ -277,7 +276,6 @@ if st.session_state.processed:
                     else:
                         st.error("Error: " + err)
                     st.stop()
-
             if "NOT FOUND" in answer.upper():
                 st.markdown('<div class="not-found">The answer was not found in the document.</div>',
                             unsafe_allow_html=True)
@@ -305,6 +303,6 @@ elif not uploaded:
 3. Ask any question — Groq LLM answers using **only** your document
 
 **Free tier tips**
-- Use `llama-3.1-8b-instant` — fastest, fewest tokens
+- Use llama-3.1-8b-instant — fastest, fewest tokens
 - Keep chunks at 3-4 to stay within rate limits
     """)
