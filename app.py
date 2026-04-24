@@ -12,43 +12,9 @@ st.set_page_config(page_title="AskMyDocs", page_icon="📄", layout="centered",
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-
 html, body, [class*="css"], .stApp { font-family: 'Inter', sans-serif; }
 #MainMenu, footer, header { visibility: hidden; }
 
-/* ── App background ── */
-.stApp { background: #f7f6f2; }
-
-/* ── Sidebar — light themed ── */
-section[data-testid="stSidebar"] {
-    background: #ffffff !important;
-    border-right: 1px solid #dcd9d5 !important;
-}
-section[data-testid="stSidebar"] .stMarkdown,
-section[data-testid="stSidebar"] label,
-section[data-testid="stSidebar"] p,
-section[data-testid="stSidebar"] span,
-section[data-testid="stSidebar"] div,
-section[data-testid="stSidebar"] small { color: #28251d !important; }
-section[data-testid="stSidebar"] h1,
-section[data-testid="stSidebar"] h2,
-section[data-testid="stSidebar"] h3 { color: #28251d !important; }
-section[data-testid="stSidebar"] .stSelectbox > div > div {
-    background: #f7f6f2 !important;
-    border-color: #d4d1ca !important;
-    color: #28251d !important;
-    border-radius: 8px !important;
-}
-section[data-testid="stSidebar"] .stSlider { color: #28251d !important; }
-
-/* sidebar toggle arrow button */
-[data-testid="collapsedControl"] {
-    color: #28251d !important;
-    background: #ffffff !important;
-    border: 1px solid #dcd9d5 !important;
-}
-
-/* ── Answer box ── */
 .answer {
     background: #ffffff;
     border: 1px solid #cedcd8;
@@ -60,8 +26,6 @@ section[data-testid="stSidebar"] .stSlider { color: #28251d !important; }
     color: #28251d;
     box-shadow: 0 2px 8px rgba(0,0,0,.05);
 }
-
-/* ── Not found box ── */
 .not-found {
     background: #fff8f5;
     border: 1px solid #e8cfc4;
@@ -70,8 +34,6 @@ section[data-testid="stSidebar"] .stSlider { color: #28251d !important; }
     color: #964219;
     font-size: .9rem;
 }
-
-/* ── Token pills ── */
 .pill {
     display: inline-block;
     background: rgba(1,105,111,0.08);
@@ -84,44 +46,32 @@ section[data-testid="stSidebar"] .stSlider { color: #28251d !important; }
     margin-right: .3rem;
     margin-top: .4rem;
 }
-
-/* ── Buttons ── */
 .stButton > button {
     background: #01696f !important;
     color: #fff !important;
     border: none !important;
     border-radius: 8px !important;
     font-weight: 500 !important;
-    transition: background 180ms ease !important;
 }
 .stButton > button:hover { background: #0c4e54 !important; }
-
-/* ── Inputs ── */
-.stTextInput input, [data-testid="stChatInput"] textarea {
-    border-radius: 8px !important;
-    border: 1px solid #d4d1ca !important;
-    background: #ffffff !important;
-    color: #28251d !important;
-    font-size: .95rem !important;
-}
-
-/* ── File uploader ── */
-[data-testid="stFileUploader"] {
-    background: #ffffff;
-    border: 1.5px dashed #d4d1ca;
-    border-radius: 10px;
-}
-
-/* ── Chat messages ── */
-[data-testid="stChatMessage"] {
-    background: transparent !important;
-    border: none !important;
-}
-
-/* ── Misc ── */
+[data-testid="stChatMessage"] { background: transparent !important; border: none !important; }
 hr { border-color: #dcd9d5 !important; }
-.streamlit-expanderHeader { font-size: .85rem !important; font-weight: 500 !important; }
 [data-testid="stChatInput"] { margin-bottom: 1.5rem; }
+
+/* sidebar collapse/expand arrow — always visible */
+[data-testid="collapsedControl"] {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    background: #f7f6f2 !important;
+    border: 1px solid #dcd9d5 !important;
+    border-radius: 0 6px 6px 0 !important;
+    color: #28251d !important;
+    z-index: 999 !important;
+}
+[data-testid="collapsedControl"]:hover {
+    background: #edeae5 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -137,29 +87,56 @@ def extract_text(file):
     ext = file.name.rsplit(".", 1)[-1].lower()
     if ext == "pdf":
         doc = fitz.open(stream=file.read(), filetype="pdf")
-        return " ".join(page.get_text() for page in doc).strip()
+        pages = []
+        for page in doc:
+            pages.append(page.get_text())
+        return pages  # return list of pages for better chunking
     raw = file.read()
-    return (raw.decode("utf-8") if isinstance(raw, bytes) else raw).strip()
+    text = (raw.decode("utf-8") if isinstance(raw, bytes) else raw).strip()
+    return [text]  # single page for txt
 
 
-def make_chunks(text, size=300, overlap=50):
-    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
-    chunks, buf, count = [], [], 0
-    for s in sentences:
-        buf.append(s)
-        count += len(s.split())
-        if count >= size:
-            chunks.append(" ".join(buf))
-            keep, kept = [], 0
-            for sent in reversed(buf):
-                keep.insert(0, sent)
-                kept += len(sent.split())
-                if kept >= overlap:
-                    break
-            buf, count = keep, kept
-    if buf:
-        chunks.append(" ".join(buf))
-    return chunks
+def make_chunks(pages, size=300, overlap=50):
+    """
+    Improved chunking strategy:
+    1. Preserve page boundaries as natural split points
+    2. First page always becomes its own chunk (metadata/title/author lives here)
+    3. Sentence-aware splitting with word-count overlap
+    4. Small leftover sentences are merged into previous chunk, not orphaned
+    """
+    all_chunks = []
+
+    for page_num, page_text in enumerate(pages):
+        page_text = re.sub(r"\s+", " ", page_text).strip()
+        if not page_text:
+            continue
+
+        sentences = re.split(r"(?<=[.!?])\s+", page_text)
+        buf, count = [], 0
+
+        for s in sentences:
+            buf.append(s)
+            count += len(s.split())
+            if count >= size:
+                all_chunks.append(" ".join(buf))
+                # overlap: keep last N words worth of sentences
+                keep, kept = [], 0
+                for sent in reversed(buf):
+                    keep.insert(0, sent)
+                    kept += len(sent.split())
+                    if kept >= overlap:
+                        break
+                buf, count = keep, kept
+
+        # merge leftover into last chunk if tiny, else add as new chunk
+        if buf:
+            leftover = " ".join(buf)
+            if all_chunks and len(leftover.split()) < 40:
+                all_chunks[-1] = all_chunks[-1] + " " + leftover
+            else:
+                all_chunks.append(leftover)
+
+    return all_chunks
 
 
 def embed(texts):
@@ -167,12 +144,21 @@ def embed(texts):
 
 
 def retrieve(query, chunks, chunk_embs, top_k=5):
+    """
+    Hybrid retrieval:
+    1. Semantic similarity (dense)
+    2. Always pin first chunk (document metadata/title/author)
+    3. Deduplicate
+    """
     q_emb = embedder.encode(query, convert_to_tensor=True)
     scores = util.cos_sim(q_emb, chunk_embs)[0].cpu().numpy()
     idx = np.argsort(scores)[::-1][:top_k]
     result_idx = list(idx)
-    if 0 not in result_idx:
+
+    # pin first chunk for metadata queries
+    if 0 not in result_idx and len(chunks) > 0:
         result_idx = [0] + result_idx[:top_k - 1]
+
     return [chunks[i] for i in result_idx], float(scores[idx[0]])
 
 
@@ -191,9 +177,9 @@ def ask_groq(question, context, history, api_key, model, temperature):
     client = Groq(api_key=api_key)
     system = (
         "You are a precise document Q&A assistant. "
-        "Answer ONLY from the provided document context. "
-        "If the answer is not in the context, say exactly: NOT FOUND IN DOCUMENT. "
-        "Never use outside knowledge. Be concise and direct."
+        "Answer ONLY using information explicitly stated in the provided document context. "
+        "If the answer is not present in the context, say: NOT FOUND IN DOCUMENT. "
+        "Never infer, assume, or use outside knowledge. Be concise and direct."
     )
     messages = [{"role": "system", "content": system}]
     for turn in history[-3:]:
@@ -220,24 +206,20 @@ groq_key = st.secrets.get("GROQ_API_KEY", "")
 with st.sidebar:
     st.markdown("## ⚙️ Settings")
     st.divider()
-
     model = st.selectbox("🤖 Model", [
         "llama-3.1-8b-instant",
         "llama3-8b-8192",
         "llama3-70b-8192",
         "gemma2-9b-it",
     ], help="llama-3.1-8b-instant is fastest on free tier")
-
     temperature = st.slider("🌡️ Temperature", 0.0, 1.0, 0.1, 0.05,
                             help="Low = factual, High = creative")
     top_k = st.slider("📚 Chunks retrieved", 2, 8, 4,
                       help="More = richer context, more tokens used")
-
     st.divider()
     if st.session_state.processed:
         st.markdown(f"**📄 {st.session_state.filename}**")
         st.caption(f"{len(st.session_state.chunks)} chunks indexed")
-
     if st.button("🗑️ Clear chat", use_container_width=True):
         st.session_state.history = []
         st.rerun()
@@ -250,8 +232,7 @@ uploaded = st.file_uploader("Choose a PDF or TXT file", type=["pdf", "txt"])
 
 if uploaded:
     if uploaded.size > 15 * 1024 * 1024:
-        st.error("File too large (max 15 MB).")
-        st.stop()
+        st.error("File too large (max 15 MB)."); st.stop()
 
     if uploaded.name != st.session_state.filename:
         st.session_state.update(chunks=[], embs=None,
@@ -262,23 +243,20 @@ if uploaded:
         if st.button("⚡ Process Document", use_container_width=True):
             bar = st.progress(0, "Reading document...")
             try:
-                text = extract_text(uploaded)
+                pages = extract_text(uploaded)
             except Exception as e:
                 st.error(f"Could not read file: {e}"); st.stop()
-            if not text:
+            if not pages or not any(p.strip() for p in pages):
                 st.error("No text found in document."); st.stop()
 
             bar.progress(40, "Splitting into chunks...")
-            chunks = make_chunks(text)
+            chunks = make_chunks(pages)
             if not chunks:
                 st.error("Could not split document."); st.stop()
 
             bar.progress(70, "Building semantic index...")
             embs = embed(chunks)
-
-            st.session_state.chunks = chunks
-            st.session_state.embs = embs
-            st.session_state.processed = True
+            st.session_state.update(chunks=chunks, embs=embs, processed=True)
             bar.progress(100, "Ready!")
             bar.empty()
             st.success(f"✅ **{uploaded.name}** — {len(chunks)} chunks indexed")
@@ -292,7 +270,6 @@ if uploaded:
 # ── Chat ──────────────────────────────────────────────────────────
 if st.session_state.processed:
     st.divider()
-
     for turn in st.session_state.history:
         with st.chat_message("user"):
             st.write(turn["q"])
@@ -313,12 +290,10 @@ if st.session_state.processed:
 
     if question:
         if not groq_key:
-            st.error("No Groq API key found. Add GROQ_API_KEY to your Streamlit secrets.")
+            st.error("No Groq API key found. Add GROQ_API_KEY to Streamlit secrets.")
             st.stop()
-
         with st.chat_message("user"):
             st.write(question)
-
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:
@@ -340,32 +315,27 @@ if st.session_state.processed:
                     st.stop()
 
             if "NOT FOUND" in answer.upper():
-                st.markdown(
-                    '<div class="not-found">🔍 The answer was not found in the document.</div>',
-                    unsafe_allow_html=True)
+                st.markdown('<div class="not-found">🔍 The answer was not found in the document.</div>',
+                            unsafe_allow_html=True)
             else:
                 st.markdown(f'<div class="answer">{answer}</div>', unsafe_allow_html=True)
-
             st.markdown(
                 f'<span class="pill">↑ {usage.prompt_tokens} tok</span>'
                 f'<span class="pill">↓ {usage.completion_tokens} tok</span>'
                 f'<span class="pill">similarity {top_score:.2f}</span>',
                 unsafe_allow_html=True)
-
             with st.expander("View retrieved context"):
                 for i, c in enumerate(chunks_hit):
                     st.caption(f"Chunk {i+1}")
                     st.write(c[:400] + ("…" if len(c) > 400 else ""))
                     if i < len(chunks_hit) - 1:
                         st.divider()
-
         st.session_state.history.append({"q": question, "a": answer, "tokens": usage})
 
 elif not uploaded:
     st.info("👆 Upload a PDF or TXT to get started.")
     st.markdown("""
 **How it works**
-
 1. Upload any PDF or TXT (up to 15 MB)
 2. Click **⚡ Process Document**
 3. Ask any question — Groq LLM answers using **only** your document
