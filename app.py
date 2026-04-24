@@ -57,20 +57,10 @@ html, body, [class*="css"], .stApp { font-family: 'Inter', sans-serif; }
 [data-testid="stChatMessage"] { background: transparent !important; border: none !important; }
 hr { border-color: #dcd9d5 !important; }
 [data-testid="stChatInput"] { margin-bottom: 1.5rem; }
-
-/* sidebar collapse/expand arrow — always visible */
 [data-testid="collapsedControl"] {
     display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
-    background: #f7f6f2 !important;
-    border: 1px solid #dcd9d5 !important;
-    border-radius: 0 6px 6px 0 !important;
-    color: #28251d !important;
-    z-index: 999 !important;
-}
-[data-testid="collapsedControl"]:hover {
-    background: #edeae5 !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -90,36 +80,25 @@ def extract_text(file):
         pages = []
         for page in doc:
             pages.append(page.get_text())
-        return pages  # return list of pages for better chunking
+        return pages
     raw = file.read()
     text = (raw.decode("utf-8") if isinstance(raw, bytes) else raw).strip()
-    return [text]  # single page for txt
+    return [text]
 
 
 def make_chunks(pages, size=300, overlap=50):
-    """
-    Improved chunking strategy:
-    1. Preserve page boundaries as natural split points
-    2. First page always becomes its own chunk (metadata/title/author lives here)
-    3. Sentence-aware splitting with word-count overlap
-    4. Small leftover sentences are merged into previous chunk, not orphaned
-    """
     all_chunks = []
-
-    for page_num, page_text in enumerate(pages):
+    for page_text in pages:
         page_text = re.sub(r"\s+", " ", page_text).strip()
         if not page_text:
             continue
-
         sentences = re.split(r"(?<=[.!?])\s+", page_text)
         buf, count = [], 0
-
         for s in sentences:
             buf.append(s)
             count += len(s.split())
             if count >= size:
                 all_chunks.append(" ".join(buf))
-                # overlap: keep last N words worth of sentences
                 keep, kept = [], 0
                 for sent in reversed(buf):
                     keep.insert(0, sent)
@@ -127,15 +106,12 @@ def make_chunks(pages, size=300, overlap=50):
                     if kept >= overlap:
                         break
                 buf, count = keep, kept
-
-        # merge leftover into last chunk if tiny, else add as new chunk
         if buf:
             leftover = " ".join(buf)
             if all_chunks and len(leftover.split()) < 40:
                 all_chunks[-1] = all_chunks[-1] + " " + leftover
             else:
                 all_chunks.append(leftover)
-
     return all_chunks
 
 
@@ -144,21 +120,12 @@ def embed(texts):
 
 
 def retrieve(query, chunks, chunk_embs, top_k=5):
-    """
-    Hybrid retrieval:
-    1. Semantic similarity (dense)
-    2. Always pin first chunk (document metadata/title/author)
-    3. Deduplicate
-    """
     q_emb = embedder.encode(query, convert_to_tensor=True)
     scores = util.cos_sim(q_emb, chunk_embs)[0].cpu().numpy()
     idx = np.argsort(scores)[::-1][:top_k]
     result_idx = list(idx)
-
-    # pin first chunk for metadata queries
     if 0 not in result_idx and len(chunks) > 0:
         result_idx = [0] + result_idx[:top_k - 1]
-
     return [chunks[i] for i in result_idx], float(scores[idx[0]])
 
 
@@ -170,7 +137,11 @@ def pack_context(chunks, token_budget=2800):
             break
         parts.append(c)
         total += len(c)
-    return "\n\n---\n\n".join(parts)
+    return "
+
+---
+
+".join(parts)
 
 
 def ask_groq(question, context, history, api_key, model, temperature):
@@ -187,7 +158,10 @@ def ask_groq(question, context, history, api_key, model, temperature):
         messages.append({"role": "assistant", "content": turn["a"]})
     messages.append({
         "role": "user",
-        "content": f"Document context:\n{context}\n\nQuestion: {question}"
+        "content": f"Document context:
+{context}
+
+Question: {question}"
     })
     resp = client.chat.completions.create(
         model=model, messages=messages,
@@ -202,31 +176,31 @@ for k, v in {"chunks": [], "embs": None, "filename": "", "processed": False, "hi
 
 groq_key = st.secrets.get("GROQ_API_KEY", "")
 
-# ── Sidebar ───────────────────────────────────────────────────────
+# Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ Settings")
+    st.markdown("## Settings")
     st.divider()
-    model = st.selectbox("🤖 Model", [
+    model = st.selectbox("Model", [
         "llama-3.1-8b-instant",
         "llama3-8b-8192",
         "llama3-70b-8192",
         "gemma2-9b-it",
     ], help="llama-3.1-8b-instant is fastest on free tier")
-    temperature = st.slider("🌡️ Temperature", 0.0, 1.0, 0.1, 0.05,
+    temperature = st.slider("Temperature", 0.0, 1.0, 0.1, 0.05,
                             help="Low = factual, High = creative")
-    top_k = st.slider("📚 Chunks retrieved", 2, 8, 4,
+    top_k = st.slider("Chunks retrieved", 2, 8, 4,
                       help="More = richer context, more tokens used")
     st.divider()
     if st.session_state.processed:
-        st.markdown(f"**📄 {st.session_state.filename}**")
+        st.markdown(f"**{st.session_state.filename}**")
         st.caption(f"{len(st.session_state.chunks)} chunks indexed")
-    if st.button("🗑️ Clear chat", use_container_width=True):
+    if st.button("Clear chat", use_container_width=True):
         st.session_state.history = []
         st.rerun()
 
-# ── Main ──────────────────────────────────────────────────────────
-st.markdown("# 📄 AskMyDocs")
-st.markdown("Upload a document · ask anything · answers come **only** from your document.")
+# Main
+st.markdown("# AskMyDocs")
+st.markdown("Upload a document and ask questions based **only** on its content.")
 
 uploaded = st.file_uploader("Choose a PDF or TXT file", type=["pdf", "txt"])
 
@@ -240,7 +214,7 @@ if uploaded:
                                 processed=False, history=[])
 
     if not st.session_state.processed:
-        if st.button("⚡ Process Document", use_container_width=True):
+        if st.button("Process Document", use_container_width=True):
             bar = st.progress(0, "Reading document...")
             try:
                 pages = extract_text(uploaded)
@@ -248,26 +222,24 @@ if uploaded:
                 st.error(f"Could not read file: {e}"); st.stop()
             if not pages or not any(p.strip() for p in pages):
                 st.error("No text found in document."); st.stop()
-
             bar.progress(40, "Splitting into chunks...")
             chunks = make_chunks(pages)
             if not chunks:
                 st.error("Could not split document."); st.stop()
-
             bar.progress(70, "Building semantic index...")
             embs = embed(chunks)
             st.session_state.update(chunks=chunks, embs=embs, processed=True)
             bar.progress(100, "Ready!")
             bar.empty()
-            st.success(f"✅ **{uploaded.name}** — {len(chunks)} chunks indexed")
+            st.success(f"**{uploaded.name}** — {len(chunks)} chunks indexed")
             st.rerun()
     else:
-        st.success(f"✅ **{st.session_state.filename}** — {len(st.session_state.chunks)} chunks indexed")
-        if st.button("🔄 Reprocess Document", use_container_width=True):
+        st.success(f"**{st.session_state.filename}** — {len(st.session_state.chunks)} chunks indexed")
+        if st.button("Reprocess Document", use_container_width=True):
             st.session_state.processed = False
             st.rerun()
 
-# ── Chat ──────────────────────────────────────────────────────────
+# Chat
 if st.session_state.processed:
     st.divider()
     for turn in st.session_state.history:
@@ -275,14 +247,14 @@ if st.session_state.processed:
             st.write(turn["q"])
         with st.chat_message("assistant"):
             if "NOT FOUND" in turn["a"].upper():
-                st.markdown(f'<div class="not-found">🔍 {turn["a"]}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="not-found">{turn["a"]}</div>', unsafe_allow_html=True)
             else:
                 st.markdown(f'<div class="answer">{turn["a"]}</div>', unsafe_allow_html=True)
             if turn.get("tokens"):
                 u = turn["tokens"]
                 st.markdown(
-                    f'<span class="pill">↑ {u.prompt_tokens} tok</span>'
-                    f'<span class="pill">↓ {u.completion_tokens} tok</span>',
+                    f'<span class="pill">in {u.prompt_tokens}</span>'
+                    f'<span class="pill">out {u.completion_tokens}</span>',
                     unsafe_allow_html=True)
 
     st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
@@ -307,21 +279,21 @@ if st.session_state.processed:
                 except Exception as e:
                     err = str(e)
                     if "429" in err or "rate_limit" in err.lower():
-                        st.error("⏳ Rate limit hit — wait a moment and retry.")
+                        st.error("Rate limit hit — wait a moment and retry.")
                     elif "401" in err or "invalid_api_key" in err.lower():
-                        st.error("❌ Invalid API key. Check Streamlit secrets.")
+                        st.error("Invalid API key. Check Streamlit secrets.")
                     else:
                         st.error(f"Error: {err}")
                     st.stop()
 
             if "NOT FOUND" in answer.upper():
-                st.markdown('<div class="not-found">🔍 The answer was not found in the document.</div>',
+                st.markdown('<div class="not-found">The answer was not found in the document.</div>',
                             unsafe_allow_html=True)
             else:
                 st.markdown(f'<div class="answer">{answer}</div>', unsafe_allow_html=True)
             st.markdown(
-                f'<span class="pill">↑ {usage.prompt_tokens} tok</span>'
-                f'<span class="pill">↓ {usage.completion_tokens} tok</span>'
+                f'<span class="pill">in {usage.prompt_tokens}</span>'
+                f'<span class="pill">out {usage.completion_tokens}</span>'
                 f'<span class="pill">similarity {top_score:.2f}</span>',
                 unsafe_allow_html=True)
             with st.expander("View retrieved context"):
@@ -333,11 +305,11 @@ if st.session_state.processed:
         st.session_state.history.append({"q": question, "a": answer, "tokens": usage})
 
 elif not uploaded:
-    st.info("👆 Upload a PDF or TXT to get started.")
+    st.info("Upload a PDF or TXT to get started.")
     st.markdown("""
 **How it works**
 1. Upload any PDF or TXT (up to 15 MB)
-2. Click **⚡ Process Document**
+2. Click **Process Document**
 3. Ask any question — Groq LLM answers using **only** your document
 
 **Free tier tips**
