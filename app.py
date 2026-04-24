@@ -6,7 +6,8 @@ import numpy as np
 from groq import Groq
 from sentence_transformers import SentenceTransformer, util
 
-st.set_page_config(page_title="AskMyDocs", page_icon="📄", layout="centered")
+st.set_page_config(page_title="AskMyDocs", page_icon="📄", layout="centered",
+                   initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -14,8 +15,40 @@ st.markdown("""
 
 html, body, [class*="css"], .stApp { font-family: 'Inter', sans-serif; }
 #MainMenu, footer, header { visibility: hidden; }
+
+/* ── App background ── */
 .stApp { background: #f7f6f2; }
 
+/* ── Sidebar — light themed ── */
+section[data-testid="stSidebar"] {
+    background: #ffffff !important;
+    border-right: 1px solid #dcd9d5 !important;
+}
+section[data-testid="stSidebar"] .stMarkdown,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] div,
+section[data-testid="stSidebar"] small { color: #28251d !important; }
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 { color: #28251d !important; }
+section[data-testid="stSidebar"] .stSelectbox > div > div {
+    background: #f7f6f2 !important;
+    border-color: #d4d1ca !important;
+    color: #28251d !important;
+    border-radius: 8px !important;
+}
+section[data-testid="stSidebar"] .stSlider { color: #28251d !important; }
+
+/* sidebar toggle arrow button */
+[data-testid="collapsedControl"] {
+    color: #28251d !important;
+    background: #ffffff !important;
+    border: 1px solid #dcd9d5 !important;
+}
+
+/* ── Answer box ── */
 .answer {
     background: #ffffff;
     border: 1px solid #cedcd8;
@@ -27,6 +60,8 @@ html, body, [class*="css"], .stApp { font-family: 'Inter', sans-serif; }
     color: #28251d;
     box-shadow: 0 2px 8px rgba(0,0,0,.05);
 }
+
+/* ── Not found box ── */
 .not-found {
     background: #fff8f5;
     border: 1px solid #e8cfc4;
@@ -35,10 +70,12 @@ html, body, [class*="css"], .stApp { font-family: 'Inter', sans-serif; }
     color: #964219;
     font-size: .9rem;
 }
+
+/* ── Token pills ── */
 .pill {
     display: inline-block;
-    background: rgba(1,105,111,0.1);
-    border: 1px solid rgba(1,105,111,0.25);
+    background: rgba(1,105,111,0.08);
+    border: 1px solid rgba(1,105,111,0.2);
     border-radius: 999px;
     padding: .15rem .65rem;
     font-size: .75rem;
@@ -48,36 +85,7 @@ html, body, [class*="css"], .stApp { font-family: 'Inter', sans-serif; }
     margin-top: .4rem;
 }
 
-@media (prefers-color-scheme: dark) {
-    .stApp { background: #171614; }
-    .answer {
-        background: #1e1e1e;
-        border-color: #2d4a4c;
-        color: #e0dfdd;
-        box-shadow: 0 2px 8px rgba(0,0,0,.3);
-    }
-    .not-found {
-        background: #2a1f1a;
-        border-color: #5a3020;
-        color: #e09070;
-    }
-    .pill {
-        background: rgba(79,152,163,0.15);
-        border-color: rgba(79,152,163,0.3);
-        color: #4f98a3;
-    }
-}
-
-section[data-testid="stSidebar"] { background: #1c1b19 !important; }
-section[data-testid="stSidebar"] .stMarkdown,
-section[data-testid="stSidebar"] label,
-section[data-testid="stSidebar"] p,
-section[data-testid="stSidebar"] span,
-section[data-testid="stSidebar"] div { color: #cdccca !important; }
-section[data-testid="stSidebar"] h1,
-section[data-testid="stSidebar"] h2,
-section[data-testid="stSidebar"] h3 { color: #ffffff !important; }
-
+/* ── Buttons ── */
 .stButton > button {
     background: #01696f !important;
     color: #fff !important;
@@ -88,14 +96,32 @@ section[data-testid="stSidebar"] h3 { color: #ffffff !important; }
 }
 .stButton > button:hover { background: #0c4e54 !important; }
 
-[data-testid="stChatMessage"] { background: transparent !important; border: none !important; }
-hr { border-color: rgba(128,128,128,0.2) !important; }
-.streamlit-expanderHeader { font-size: .85rem !important; font-weight: 500 !important; }
-
-/* push chat input up a bit */
-[data-testid="stChatInput"] {
-    margin-bottom: 1.5rem;
+/* ── Inputs ── */
+.stTextInput input, [data-testid="stChatInput"] textarea {
+    border-radius: 8px !important;
+    border: 1px solid #d4d1ca !important;
+    background: #ffffff !important;
+    color: #28251d !important;
+    font-size: .95rem !important;
 }
+
+/* ── File uploader ── */
+[data-testid="stFileUploader"] {
+    background: #ffffff;
+    border: 1.5px dashed #d4d1ca;
+    border-radius: 10px;
+}
+
+/* ── Chat messages ── */
+[data-testid="stChatMessage"] {
+    background: transparent !important;
+    border: none !important;
+}
+
+/* ── Misc ── */
+hr { border-color: #dcd9d5 !important; }
+.streamlit-expanderHeader { font-size: .85rem !important; font-weight: 500 !important; }
+[data-testid="stChatInput"] { margin-bottom: 1.5rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -193,7 +219,7 @@ groq_key = st.secrets.get("GROQ_API_KEY", "")
 # ── Sidebar ───────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## ⚙️ Settings")
-    st.markdown("---")
+    st.divider()
 
     model = st.selectbox("🤖 Model", [
         "llama-3.1-8b-instant",
@@ -201,17 +227,18 @@ with st.sidebar:
         "llama3-70b-8192",
         "gemma2-9b-it",
     ], help="llama-3.1-8b-instant is fastest on free tier")
+
     temperature = st.slider("🌡️ Temperature", 0.0, 1.0, 0.1, 0.05,
                             help="Low = factual, High = creative")
     top_k = st.slider("📚 Chunks retrieved", 2, 8, 4,
                       help="More = richer context, more tokens used")
 
-    st.markdown("---")
+    st.divider()
     if st.session_state.processed:
         st.markdown(f"**📄 {st.session_state.filename}**")
         st.caption(f"{len(st.session_state.chunks)} chunks indexed")
 
-    if st.button("🗑️ Clear chat"):
+    if st.button("🗑️ Clear chat", use_container_width=True):
         st.session_state.history = []
         st.rerun()
 
@@ -231,7 +258,6 @@ if uploaded:
                                 filename=uploaded.name,
                                 processed=False, history=[])
 
-    # ── Process Document Button ───────────────────────────────────
     if not st.session_state.processed:
         if st.button("⚡ Process Document", use_container_width=True):
             bar = st.progress(0, "Reading document...")
@@ -282,9 +308,7 @@ if st.session_state.processed:
                     f'<span class="pill">↓ {u.completion_tokens} tok</span>',
                     unsafe_allow_html=True)
 
-    # spacer to push chat input up
-    st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
-
+    st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
     question = st.chat_input("Ask a question about your document...")
 
     if question:
@@ -343,7 +367,7 @@ elif not uploaded:
 **How it works**
 
 1. Upload any PDF or TXT (up to 15 MB)
-2. Click **Process Document**
+2. Click **⚡ Process Document**
 3. Ask any question — Groq LLM answers using **only** your document
 
 **Free tier tips**
