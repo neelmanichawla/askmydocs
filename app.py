@@ -11,32 +11,91 @@ st.set_page_config(page_title="AskMyDocs", page_icon="📄", layout="centered")
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-*, body { font-family: 'Inter', sans-serif; }
+
+html, body, [class*="css"], .stApp { font-family: 'Inter', sans-serif; }
 #MainMenu, footer, header { visibility: hidden; }
 .stApp { background: #f7f6f2; }
+
 .answer {
-    background: #fff; border: 1px solid #cedcd8; border-radius: 12px;
-    padding: 1.1rem 1.3rem; margin-top: .5rem; line-height: 1.7;
-    font-size: .95rem; color: #28251d; box-shadow: 0 2px 8px rgba(0,0,0,.05);
+    background: #ffffff;
+    border: 1px solid #cedcd8;
+    border-radius: 12px;
+    padding: 1.1rem 1.3rem;
+    margin-top: .5rem;
+    line-height: 1.7;
+    font-size: .95rem;
+    color: #28251d;
+    box-shadow: 0 2px 8px rgba(0,0,0,.05);
 }
 .not-found {
-    background: #fff8f5; border: 1px solid #e8cfc4;
-    border-radius: 12px; padding: .9rem 1.2rem; color: #964219; font-size: .9rem;
+    background: #fff8f5;
+    border: 1px solid #e8cfc4;
+    border-radius: 12px;
+    padding: .9rem 1.2rem;
+    color: #964219;
+    font-size: .9rem;
 }
 .pill {
-    display: inline-block; background: #f0f7f6; border: 1px solid #cedcd8;
-    border-radius: 999px; padding: .15rem .65rem;
-    font-size: .75rem; color: #01696f; font-weight: 500; margin-right: .3rem;
+    display: inline-block;
+    background: rgba(1,105,111,0.1);
+    border: 1px solid rgba(1,105,111,0.25);
+    border-radius: 999px;
+    padding: .15rem .65rem;
+    font-size: .75rem;
+    color: #01696f;
+    font-weight: 500;
+    margin-right: .3rem;
+    margin-top: .4rem;
 }
-section[data-testid="stSidebar"] { background: #1c1b19; }
-section[data-testid="stSidebar"] * { color: #cdccca !important; }
-section[data-testid="stSidebar"] input {
-    background: #2d2c2a !important; border-color: #393836 !important;
-    color: #cdccca !important; border-radius: 8px !important;
+
+@media (prefers-color-scheme: dark) {
+    .stApp { background: #171614; }
+    .answer {
+        background: #1e1e1e;
+        border-color: #2d4a4c;
+        color: #e0dfdd;
+        box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    }
+    .not-found {
+        background: #2a1f1a;
+        border-color: #5a3020;
+        color: #e09070;
+    }
+    .pill {
+        background: rgba(79,152,163,0.15);
+        border-color: rgba(79,152,163,0.3);
+        color: #4f98a3;
+    }
 }
-.stButton > button { background: #01696f; color: #fff; border: none; border-radius: 8px; font-weight: 500; }
-.stButton > button:hover { background: #0c4e54; color: #fff; }
-hr { border-color: #dcd9d5; }
+
+section[data-testid="stSidebar"] { background: #1c1b19 !important; }
+section[data-testid="stSidebar"] .stMarkdown,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] div { color: #cdccca !important; }
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 { color: #ffffff !important; }
+
+.stButton > button {
+    background: #01696f !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    transition: background 180ms ease !important;
+}
+.stButton > button:hover { background: #0c4e54 !important; }
+
+[data-testid="stChatMessage"] { background: transparent !important; border: none !important; }
+hr { border-color: rgba(128,128,128,0.2) !important; }
+.streamlit-expanderHeader { font-size: .85rem !important; font-weight: 500 !important; }
+
+/* push chat input up a bit */
+[data-testid="stChatInput"] {
+    margin-bottom: 1.5rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -85,7 +144,10 @@ def retrieve(query, chunks, chunk_embs, top_k=5):
     q_emb = embedder.encode(query, convert_to_tensor=True)
     scores = util.cos_sim(q_emb, chunk_embs)[0].cpu().numpy()
     idx = np.argsort(scores)[::-1][:top_k]
-    return [chunks[i] for i in idx], float(scores[idx[0]])
+    result_idx = list(idx)
+    if 0 not in result_idx:
+        result_idx = [0] + result_idx[:top_k - 1]
+    return [chunks[i] for i in result_idx], float(scores[idx[0]])
 
 
 def pack_context(chunks, token_budget=2800):
@@ -126,33 +188,35 @@ for k, v in {"chunks": [], "embs": None, "filename": "", "processed": False, "hi
     if k not in st.session_state:
         st.session_state[k] = v
 
+groq_key = st.secrets.get("GROQ_API_KEY", "")
+
+# ── Sidebar ───────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## Settings")
+    st.markdown("## ⚙️ Settings")
     st.markdown("---")
-    api_key = st.text_input("Groq API Key", type="password", placeholder="gsk_...", help="Free at console.groq.com")
-    groq_key = api_key or st.secrets.get("GROQ_API_KEY", "")
-    if groq_key:
-        st.markdown('<small style="color:#6daa45">✅ Key set</small>', unsafe_allow_html=True)
-    else:
-        st.markdown('<small style="color:#bb653b">⚠️ No key — add one above</small>', unsafe_allow_html=True)
-    st.markdown("---")
-    model = st.selectbox("Model", [
+
+    model = st.selectbox("🤖 Model", [
         "llama-3.1-8b-instant",
         "llama3-8b-8192",
         "llama3-70b-8192",
         "gemma2-9b-it",
     ], help="llama-3.1-8b-instant is fastest on free tier")
-    temperature = st.slider("Temperature", 0.0, 1.0, 0.1, 0.05)
-    top_k = st.slider("Chunks retrieved", 2, 8, 4)
+    temperature = st.slider("🌡️ Temperature", 0.0, 1.0, 0.1, 0.05,
+                            help="Low = factual, High = creative")
+    top_k = st.slider("📚 Chunks retrieved", 2, 8, 4,
+                      help="More = richer context, more tokens used")
+
     st.markdown("---")
     if st.session_state.processed:
-        st.markdown(f"**{st.session_state.filename}**")
-        st.markdown(f"{len(st.session_state.chunks)} chunks indexed")
-    if st.button("Clear chat"):
+        st.markdown(f"**📄 {st.session_state.filename}**")
+        st.caption(f"{len(st.session_state.chunks)} chunks indexed")
+
+    if st.button("🗑️ Clear chat"):
         st.session_state.history = []
         st.rerun()
 
-st.markdown("# AskMyDocs")
+# ── Main ──────────────────────────────────────────────────────────
+st.markdown("# 📄 AskMyDocs")
 st.markdown("Upload a document · ask anything · answers come **only** from your document.")
 
 uploaded = st.file_uploader("Choose a PDF or TXT file", type=["pdf", "txt"])
@@ -163,32 +227,43 @@ if uploaded:
         st.stop()
 
     if uploaded.name != st.session_state.filename:
-        st.session_state.update(chunks=[], embs=None, filename=uploaded.name, processed=False, history=[])
+        st.session_state.update(chunks=[], embs=None,
+                                filename=uploaded.name,
+                                processed=False, history=[])
 
+    # ── Process Document Button ───────────────────────────────────
     if not st.session_state.processed:
-        bar = st.progress(0, "Reading document...")
-        try:
-            text = extract_text(uploaded)
-        except Exception as e:
-            st.error(f"Could not read file: {e}"); st.stop()
-        if not text:
-            st.error("No text found in document."); st.stop()
+        if st.button("⚡ Process Document", use_container_width=True):
+            bar = st.progress(0, "Reading document...")
+            try:
+                text = extract_text(uploaded)
+            except Exception as e:
+                st.error(f"Could not read file: {e}"); st.stop()
+            if not text:
+                st.error("No text found in document."); st.stop()
 
-        bar.progress(40, "Splitting into chunks...")
-        chunks = make_chunks(text)
-        if not chunks:
-            st.error("Could not split document."); st.stop()
+            bar.progress(40, "Splitting into chunks...")
+            chunks = make_chunks(text)
+            if not chunks:
+                st.error("Could not split document."); st.stop()
 
-        bar.progress(70, "Building semantic index...")
-        embs = embed(chunks)
+            bar.progress(70, "Building semantic index...")
+            embs = embed(chunks)
 
-        st.session_state.chunks = chunks
-        st.session_state.embs = embs
-        st.session_state.processed = True
-        bar.progress(100, "Ready!")
-        bar.empty()
-        st.success(f"✅ **{uploaded.name}** — {len(chunks)} chunks indexed")
+            st.session_state.chunks = chunks
+            st.session_state.embs = embs
+            st.session_state.processed = True
+            bar.progress(100, "Ready!")
+            bar.empty()
+            st.success(f"✅ **{uploaded.name}** — {len(chunks)} chunks indexed")
+            st.rerun()
+    else:
+        st.success(f"✅ **{st.session_state.filename}** — {len(st.session_state.chunks)} chunks indexed")
+        if st.button("🔄 Reprocess Document", use_container_width=True):
+            st.session_state.processed = False
+            st.rerun()
 
+# ── Chat ──────────────────────────────────────────────────────────
 if st.session_state.processed:
     st.divider()
 
@@ -203,15 +278,18 @@ if st.session_state.processed:
             if turn.get("tokens"):
                 u = turn["tokens"]
                 st.markdown(
-                    f'<span class="pill">↑ {u.prompt_tokens} tokens</span>'
-                    f'<span class="pill">↓ {u.completion_tokens} tokens</span>',
+                    f'<span class="pill">↑ {u.prompt_tokens} tok</span>'
+                    f'<span class="pill">↓ {u.completion_tokens} tok</span>',
                     unsafe_allow_html=True)
+
+    # spacer to push chat input up
+    st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
 
     question = st.chat_input("Ask a question about your document...")
 
     if question:
         if not groq_key:
-            st.warning("Add your Groq API key in the sidebar.")
+            st.error("No Groq API key found. Add GROQ_API_KEY to your Streamlit secrets.")
             st.stop()
 
         with st.chat_message("user"):
@@ -221,7 +299,8 @@ if st.session_state.processed:
             with st.spinner("Thinking..."):
                 try:
                     chunks_hit, top_score = retrieve(
-                        question, st.session_state.chunks, st.session_state.embs, top_k=top_k)
+                        question, st.session_state.chunks,
+                        st.session_state.embs, top_k=top_k)
                     context = pack_context(chunks_hit)
                     answer, usage = ask_groq(
                         question, context, st.session_state.history,
@@ -229,21 +308,23 @@ if st.session_state.processed:
                 except Exception as e:
                     err = str(e)
                     if "429" in err or "rate_limit" in err.lower():
-                        st.error("Rate limit hit — wait a few seconds and retry.")
+                        st.error("⏳ Rate limit hit — wait a moment and retry.")
                     elif "401" in err or "invalid_api_key" in err.lower():
-                        st.error("Invalid API key. Check the sidebar.")
+                        st.error("❌ Invalid API key. Check Streamlit secrets.")
                     else:
                         st.error(f"Error: {err}")
                     st.stop()
 
             if "NOT FOUND" in answer.upper():
-                st.markdown('<div class="not-found">🔍 The answer was not found in the document.</div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="not-found">🔍 The answer was not found in the document.</div>',
+                    unsafe_allow_html=True)
             else:
                 st.markdown(f'<div class="answer">{answer}</div>', unsafe_allow_html=True)
 
             st.markdown(
-                f'<span class="pill">↑ {usage.prompt_tokens} tokens</span>'
-                f'<span class="pill">↓ {usage.completion_tokens} tokens</span>'
+                f'<span class="pill">↑ {usage.prompt_tokens} tok</span>'
+                f'<span class="pill">↓ {usage.completion_tokens} tok</span>'
                 f'<span class="pill">similarity {top_score:.2f}</span>',
                 unsafe_allow_html=True)
 
@@ -259,15 +340,13 @@ if st.session_state.processed:
 elif not uploaded:
     st.info("👆 Upload a PDF or TXT to get started.")
     st.markdown("""
-<div class="answer" style="margin-top:1rem">
-<strong>How it works</strong><br><br>
-1. Upload any PDF or TXT (up to 15 MB)<br>
-2. Document is split into chunks and embedded locally<br>
-3. Your question retrieves the most relevant chunks<br>
-4. Groq LLM answers using <em>only</em> those chunks<br><br>
-<strong>Free tier tips</strong><br><br>
-• Use <code>llama-3.1-8b-instant</code> — fastest, fewest tokens<br>
-• Keep chunks at 3–4 to stay within rate limits<br>
-• Get a free key at <a href="https://console.groq.com" target="_blank">console.groq.com</a>
-</div>
-""", unsafe_allow_html=True)
+**How it works**
+
+1. Upload any PDF or TXT (up to 15 MB)
+2. Click **Process Document**
+3. Ask any question — Groq LLM answers using **only** your document
+
+**Free tier tips**
+- Use `llama-3.1-8b-instant` — fastest, fewest tokens
+- Keep chunks at 3–4 to stay within rate limits
+    """)
