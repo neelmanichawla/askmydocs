@@ -1,10 +1,11 @@
-# AskMyDocs — version240424b
+# AskMyDocs
 import streamlit as st
 import fitz
 import re
 import numpy as np
 from groq import Groq
 from sentence_transformers import SentenceTransformer, util
+import torch
 
 st.set_page_config(
     page_title="AskMyDocs",
@@ -13,7 +14,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-TOP_K = 3  # hardcoded — no need to expose this to users
+TOP_K = 3
+MODEL = "llama-3.1-8b-instant"
+TEMPERATURE = 0.1
 
 @st.cache_resource(show_spinner="Loading embedding model...")
 def load_embedder():
@@ -60,17 +63,12 @@ def make_chunks(pages, size=300, overlap=50):
 
 @st.cache_data(show_spinner="Building semantic index...")
 def embed_chunks(chunks_tuple):
-    """Cache embeddings by document content so reprocessing is instant."""
     return embedder.encode(list(chunks_tuple), convert_to_tensor=False, show_progress_bar=False)
 
 def retrieve(query, chunks, chunk_embs_np):
     q_emb = embedder.encode(query, convert_to_tensor=False)
-    chunk_tensor = util.normalize_embeddings(
-        __import__("torch").tensor(chunk_embs_np)
-    )
-    q_tensor = util.normalize_embeddings(
-        __import__("torch").tensor(q_emb).unsqueeze(0)
-    )
+    chunk_tensor = util.normalize_embeddings(torch.tensor(chunk_embs_np))
+    q_tensor = util.normalize_embeddings(torch.tensor(q_emb).unsqueeze(0))
     scores = (q_tensor @ chunk_tensor.T)[0].numpy()
     idx = np.argsort(scores)[::-1][:TOP_K]
     result_idx = list(idx)
@@ -88,7 +86,7 @@ def pack_context(chunks, token_budget=2800):
         total += len(c)
     return "\n\n---\n\n".join(parts)
 
-def ask_groq(question, context, history, api_key, model, temperature):
+def ask_groq(question, context, history, api_key):
     client = Groq(api_key=api_key)
     system = (
         "You are a precise document Q&A assistant. "
@@ -105,9 +103,9 @@ def ask_groq(question, context, history, api_key, model, temperature):
         "content": f"Document context:\n{context}\n\nQuestion: {question}"
     })
     resp = client.chat.completions.create(
-        model=model,
+        model=MODEL,
         messages=messages,
-        temperature=temperature,
+        temperature=TEMPERATURE,
         max_tokens=800,
     )
     return resp.choices[0].message.content.strip(), resp.usage
@@ -120,23 +118,16 @@ groq_key = st.secrets.get("GROQ_API_KEY", "")
 
 # ── Sidebar ──────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## ⚙️ Settings")
-    st.divider()
-    model = st.selectbox("🤖 Model", [
-        "llama-3.1-8b-instant",
-        "llama3-8b-8192",
-        "llama3-70b-8192",
-        "gemma2-9b-it",
-    ], help="llama-3.1-8b-instant is fastest on free tier")
-    temperature = st.slider("🌡️ Temperature", 0.0, 1.0, 0.1, 0.05,
-                            help="Low = factual, High = creative")
+    st.markdown("## 📄 Document")
     st.divider()
     if st.session_state.processed:
-        st.markdown(f"**📄 {st.session_state.filename}**")
+        st.markdown(f"**{st.session_state.filename}**")
         st.caption(f"{len(st.session_state.chunks)} chunks indexed")
         if st.button("🗑️ Clear chat", use_container_width=True):
             st.session_state.history = []
             st.rerun()
+    else:
+        st.caption("No document loaded yet.")
 
 # ── Main ─────────────────────────────────────────────────────────────
 st.markdown("# 📄 AskMyDocs")
@@ -169,7 +160,6 @@ if uploaded:
                 st.error("Could not split document."); st.stop()
 
             bar.progress(70, "Building semantic index...")
-            # embed_chunks is cached — fast on repeat, safe on first run
             embs_np = embed_chunks(tuple(chunks))
             st.session_state.update(chunks=chunks, embs=embs_np, processed=True)
             bar.progress(100, "Ready!")
@@ -214,7 +204,7 @@ if st.session_state.processed:
                 answer, usage = ask_groq(
                     prompt, context,
                     st.session_state.history,
-                    groq_key, model, temperature
+                    groq_key
                 )
 
             if "NOT FOUND" in answer.upper():
