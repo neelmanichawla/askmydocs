@@ -4,6 +4,7 @@ import fitz
 import re
 import numpy as np
 from groq import Groq
+from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer, util
 import torch
 
@@ -15,6 +16,8 @@ st.set_page_config(
 )
 
 TOP_K = 3
+CANDIDATE_K = 12
+RRF_K = 60
 MODEL = "llama-3.1-8b-instant"
 TEMPERATURE = 0.1
 
@@ -79,16 +82,38 @@ def format_sources(chunks):
         for c in chunks
     ]
 
+def tokenize(text):
+    return re.findall(r"\w+", text.lower())
+
+def rrf_scores(rankings, k=RRF_K):
+    scores = {}
+    for ranking in rankings:
+        for rank, idx in enumerate(ranking, start=1):
+            scores[idx] = scores.get(idx, 0.0) + 1.0 / (k + rank)
+    return scores
+
 def retrieve(query, chunks, chunk_embs_np):
     q_emb = embedder.encode(query, convert_to_tensor=False)
     chunk_tensor = util.normalize_embeddings(torch.tensor(chunk_embs_np))
     q_tensor = util.normalize_embeddings(torch.tensor(q_emb).unsqueeze(0))
     scores = (q_tensor @ chunk_tensor.T)[0].numpy()
-    idx = np.argsort(scores)[::-1][:TOP_K]
-    result_idx = list(idx)
-    if 0 not in result_idx and len(chunks) > 0:
-        result_idx = [0] + result_idx[:TOP_K - 1]
-    return [chunks[i] for i in result_idx], float(scores[idx[0]])
+    candidate_k = min(CANDIDATE_K, len(chunks))
+    dense_idx = list(np.argsort(scores)[::-1][:candidate_k])
+
+    tokenized_chunks = [tokenize(c["text"]) for c in chunks]
+    bm25 = BM25Okapi(tokenized_chunks)
+    bm25_scores = bm25.get_scores(tokenize(query))
+    bm25_idx = list(np.argsort(bm25_scores)[::-1][:candidate_k])
+
+    fused = rrf_scores([dense_idx, bm25_idx])
+    result_idx = [
+        idx for idx, _ in sorted(
+            fused.items(),
+            key=lambda item: item[1],
+            reverse=True
+        )[:TOP_K]
+    ]
+    return [chunks[i] for i in result_idx], float(scores[dense_idx[0]])
 
 def pack_context(chunks, token_budget=2800):
     char_budget = token_budget * 4
