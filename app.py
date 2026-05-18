@@ -35,7 +35,7 @@ def extract_text(file):
 
 def make_chunks(pages, size=300, overlap=50):
     all_chunks = []
-    for page_text in pages:
+    for page_num, page_text in enumerate(pages, start=1):
         page_text = re.sub(r"\s+", " ", page_text).strip()
         if not page_text:
             continue
@@ -45,7 +45,11 @@ def make_chunks(pages, size=300, overlap=50):
             buf.append(s)
             count += len(s.split())
             if count >= size:
-                all_chunks.append(" ".join(buf))
+                all_chunks.append({
+                    "text": " ".join(buf),
+                    "page": page_num,
+                    "chunk_index": len(all_chunks),
+                })
                 keep, kept = [], 0
                 for sent in reversed(buf):
                     keep.insert(0, sent)
@@ -55,15 +59,25 @@ def make_chunks(pages, size=300, overlap=50):
                 buf, count = keep, kept
         if buf:
             leftover = " ".join(buf)
-            if all_chunks and len(leftover.split()) < 40:
-                all_chunks[-1] = all_chunks[-1] + " " + leftover
+            if all_chunks and all_chunks[-1]["page"] == page_num and len(leftover.split()) < 40:
+                all_chunks[-1]["text"] = all_chunks[-1]["text"] + " " + leftover
             else:
-                all_chunks.append(leftover)
+                all_chunks.append({
+                    "text": leftover,
+                    "page": page_num,
+                    "chunk_index": len(all_chunks),
+                })
     return all_chunks
 
 @st.cache_data(show_spinner="Building semantic index...")
 def embed_chunks(chunks_tuple):
     return embedder.encode(list(chunks_tuple), convert_to_tensor=False, show_progress_bar=False)
+
+def format_sources(chunks):
+    return [
+        f"{c['filename']}, page {c['page']}, chunk {c['chunk_index'] + 1}"
+        for c in chunks
+    ]
 
 def retrieve(query, chunks, chunk_embs_np):
     q_emb = embedder.encode(query, convert_to_tensor=False)
@@ -80,10 +94,10 @@ def pack_context(chunks, token_budget=2800):
     char_budget = token_budget * 4
     parts, total = [], 0
     for c in chunks:
-        if total + len(c) > char_budget:
+        if total + len(c["text"]) > char_budget:
             break
-        parts.append(c)
-        total += len(c)
+        parts.append(c["text"])
+        total += len(c["text"])
     return "\n\n---\n\n".join(parts)
 
 def ask_groq(question, context, history, api_key):
@@ -160,7 +174,9 @@ if uploaded:
                 st.error("Could not split document."); st.stop()
 
             bar.progress(70, "Building semantic index...")
-            embs_np = embed_chunks(tuple(chunks))
+            for c in chunks:
+                c["filename"] = uploaded.name
+            embs_np = embed_chunks(tuple(c["text"] for c in chunks))
             st.session_state.update(chunks=chunks, embs=embs_np, processed=True)
             bar.progress(100, "Ready!")
             bar.empty()
@@ -185,6 +201,8 @@ if st.session_state.processed:
                 st.write(turn["a"])
             if "score" in turn:
                 st.caption(f"Similarity: {turn['score']:.2f} · Tokens: {turn.get('tokens', '—')}")
+            if turn.get("sources"):
+                st.caption("Sources: " + "; ".join(turn["sources"]))
 
     if prompt := st.chat_input("Ask a question about your document..."):
         if not groq_key:
@@ -201,6 +219,7 @@ if st.session_state.processed:
                     st.session_state.embs
                 )
                 context = pack_context(top_chunks)
+                sources = format_sources(top_chunks)
                 answer, usage = ask_groq(
                     prompt, context,
                     st.session_state.history,
@@ -214,8 +233,9 @@ if st.session_state.processed:
 
             tokens = getattr(usage, "total_tokens", "—")
             st.caption(f"Similarity: {score:.2f} · Tokens: {tokens}")
+            st.caption("Sources: " + "; ".join(sources))
 
         st.session_state.history.append({
             "q": prompt, "a": answer,
-            "score": score, "tokens": tokens
+            "score": score, "tokens": tokens, "sources": sources
         })
