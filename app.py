@@ -86,6 +86,31 @@ def format_sources(chunks):
         for c in chunks
     ]
 
+def retrieval_details(query, chunks):
+    return {
+        "query": query,
+        "chunks": [
+            {
+                "page": c["page"],
+                "chunk_index": c["chunk_index"] + 1,
+                "reason": c.get("context_reason", "context"),
+                "preview": c["text"][:300],
+            }
+            for c in chunks
+        ]
+    }
+
+def show_retrieval_details(details):
+    if not details:
+        return
+    with st.expander("Retrieval details"):
+        st.caption(f"Final retrieval query: {details['query']}")
+        for c in details["chunks"]:
+            st.markdown(
+                f"**Page {c['page']}, chunk {c['chunk_index']}** · {c['reason']}"
+            )
+            st.write(c["preview"])
+
 def tokenize(text):
     return re.findall(r"\w+", text.lower())
 
@@ -122,19 +147,24 @@ def add_context_chunks(result_idx, chunks, query):
     expanded = []
     seen = set()
 
+    def add_chunk(idx, reason):
+        if idx not in seen:
+            chunk = dict(chunks[idx])
+            chunk["context_reason"] = reason
+            expanded.append(chunk)
+            seen.add(idx)
+
     # Generic front-matter fallback for document-level questions, not a PDF-specific rule.
     if is_document_overview_query(query):
         for idx in range(min(LEAD_CONTEXT_K, len(chunks))):
-            expanded.append(idx)
-            seen.add(idx)
+            add_chunk(idx, "lead/front-matter fallback")
 
     for idx in result_idx:
         start = max(0, idx - NEIGHBOR_WINDOW)
         end = min(len(chunks), idx + NEIGHBOR_WINDOW + 1)
         for nearby_idx in range(start, end):
-            if nearby_idx not in seen:
-                expanded.append(nearby_idx)
-                seen.add(nearby_idx)
+            reason = "direct retrieval" if nearby_idx == idx else "neighbor"
+            add_chunk(nearby_idx, reason)
             if len(expanded) >= PACK_K:
                 return expanded
     return expanded
@@ -161,7 +191,7 @@ def retrieve(query, chunks, chunk_embs_np):
         )[:TOP_K]
     ]
     packed_idx = add_context_chunks(result_idx, chunks, query)
-    return [chunks[i] for i in packed_idx], float(scores[dense_idx[0]])
+    return packed_idx, float(scores[dense_idx[0]])
 
 def pack_context(chunks, token_budget=2800):
     char_budget = token_budget * 4
@@ -276,6 +306,8 @@ if st.session_state.processed:
                 st.caption(f"Similarity: {turn['score']:.2f} · Tokens: {turn.get('tokens', '—')}")
             if turn.get("sources"):
                 st.caption("Sources: " + "; ".join(turn["sources"]))
+            if turn.get("retrieval_details"):
+                show_retrieval_details(turn["retrieval_details"])
 
     if prompt := st.chat_input("Ask a question about your document..."):
         if not groq_key:
@@ -294,6 +326,7 @@ if st.session_state.processed:
                 )
                 context = pack_context(top_chunks)
                 sources = format_sources(top_chunks)
+                details = retrieval_details(retrieval_query, top_chunks)
                 answer, usage = ask_groq(
                     retrieval_query, context,
                     st.session_state.history,
@@ -308,8 +341,10 @@ if st.session_state.processed:
             tokens = getattr(usage, "total_tokens", "—")
             st.caption(f"Similarity: {score:.2f} · Tokens: {tokens}")
             st.caption("Sources: " + "; ".join(sources))
+            show_retrieval_details(details)
 
         st.session_state.history.append({
             "q": prompt, "a": answer,
-            "score": score, "tokens": tokens, "sources": sources
+            "score": score, "tokens": tokens, "sources": sources,
+            "retrieval_details": details
         })
