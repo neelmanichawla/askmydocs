@@ -17,8 +17,10 @@ st.set_page_config(
 
 TOP_K = 3
 CANDIDATE_K = 24
-PACK_K = 5
+PACK_K = 8
 NEIGHBOR_WINDOW = 1
+LEAD_CONTEXT_K = 3
+SHORT_QUERY_WORDS = 8
 RRF_K = 60
 MODEL = "llama-3.1-8b-instant"
 TEMPERATURE = 0.1
@@ -87,6 +89,28 @@ def format_sources(chunks):
 def tokenize(text):
     return re.findall(r"\w+", text.lower())
 
+def is_followup_query(query):
+    terms = set(tokenize(query))
+    followup_terms = {"again", "check", "retry", "search", "widen", "more"}
+    return len(terms) <= 4 and bool(terms & followup_terms)
+
+def resolve_query(query, history):
+    if not is_followup_query(query):
+        return query
+    for turn in reversed(history):
+        previous = turn.get("q", "")
+        if previous and not is_followup_query(previous):
+            return previous
+    return query
+
+def is_document_overview_query(query):
+    terms = set(tokenize(query))
+    overview_terms = {
+        "author", "title", "date", "publisher",
+        "document", "report", "paper", "file"
+    }
+    return len(terms) <= SHORT_QUERY_WORDS and bool(terms & overview_terms)
+
 def rrf_scores(rankings, k=RRF_K):
     scores = {}
     for ranking in rankings:
@@ -94,9 +118,16 @@ def rrf_scores(rankings, k=RRF_K):
             scores[idx] = scores.get(idx, 0.0) + 1.0 / (k + rank)
     return scores
 
-def add_nearby_chunks(result_idx, chunks):
+def add_context_chunks(result_idx, chunks, query):
     expanded = []
     seen = set()
+
+    # Generic front-matter fallback for document-level questions, not a PDF-specific rule.
+    if is_document_overview_query(query):
+        for idx in range(min(LEAD_CONTEXT_K, len(chunks))):
+            expanded.append(idx)
+            seen.add(idx)
+
     for idx in result_idx:
         start = max(0, idx - NEIGHBOR_WINDOW)
         end = min(len(chunks), idx + NEIGHBOR_WINDOW + 1)
@@ -129,7 +160,7 @@ def retrieve(query, chunks, chunk_embs_np):
             reverse=True
         )[:TOP_K]
     ]
-    packed_idx = add_nearby_chunks(result_idx, chunks)
+    packed_idx = add_context_chunks(result_idx, chunks, query)
     return [chunks[i] for i in packed_idx], float(scores[dense_idx[0]])
 
 def pack_context(chunks, token_budget=2800):
@@ -255,15 +286,16 @@ if st.session_state.processed:
 
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
+                retrieval_query = resolve_query(prompt, st.session_state.history)
                 top_chunks, score = retrieve(
-                    prompt,
+                    retrieval_query,
                     st.session_state.chunks,
                     st.session_state.embs
                 )
                 context = pack_context(top_chunks)
                 sources = format_sources(top_chunks)
                 answer, usage = ask_groq(
-                    prompt, context,
+                    retrieval_query, context,
                     st.session_state.history,
                     groq_key
                 )
