@@ -16,7 +16,9 @@ st.set_page_config(
 )
 
 TOP_K = 3
-CANDIDATE_K = 12
+CANDIDATE_K = 24
+PACK_K = 5
+NEIGHBOR_WINDOW = 1
 RRF_K = 60
 MODEL = "llama-3.1-8b-instant"
 TEMPERATURE = 0.1
@@ -92,6 +94,20 @@ def rrf_scores(rankings, k=RRF_K):
             scores[idx] = scores.get(idx, 0.0) + 1.0 / (k + rank)
     return scores
 
+def add_nearby_chunks(result_idx, chunks):
+    expanded = []
+    seen = set()
+    for idx in result_idx:
+        start = max(0, idx - NEIGHBOR_WINDOW)
+        end = min(len(chunks), idx + NEIGHBOR_WINDOW + 1)
+        for nearby_idx in range(start, end):
+            if nearby_idx not in seen:
+                expanded.append(nearby_idx)
+                seen.add(nearby_idx)
+            if len(expanded) >= PACK_K:
+                return expanded
+    return expanded
+
 def retrieve(query, chunks, chunk_embs_np):
     q_emb = embedder.encode(query, convert_to_tensor=False)
     chunk_tensor = util.normalize_embeddings(torch.tensor(chunk_embs_np))
@@ -113,7 +129,8 @@ def retrieve(query, chunks, chunk_embs_np):
             reverse=True
         )[:TOP_K]
     ]
-    return [chunks[i] for i in result_idx], float(scores[dense_idx[0]])
+    packed_idx = add_nearby_chunks(result_idx, chunks)
+    return [chunks[i] for i in packed_idx], float(scores[dense_idx[0]])
 
 def pack_context(chunks, token_budget=2800):
     char_budget = token_budget * 4
